@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Proyecto Leones Bowling Stricke</title>
+<style>
+  html, body {
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:#111;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color:#eee;
+  }
+  #game-container {
+    display:flex; flex-direction: row; height: 100vh;
+    background:#222;
+  }
+  #left-panel {
+    width: 300px;
+    background:#1b1b1b;
+    padding: 20px;
+    box-sizing: border-box;
+    display: flex; flex-direction: column;
+  }
+  #left-panel h1 {
+    margin-top: 0; font-size: 1.5em; color:#4caf50;
+    text-align: center;
+  }
+  #left-panel label {
+    margin: 12px 0 4px 0;
+    font-weight: bold;
+  }
+  #left-panel select, #left-panel button {
+    padding: 8px;
+    font-size: 1em;
+    margin-bottom: 12px;
+    width: 100%;
+    border-radius: 5px;
+    border:none;
+    outline:none;
+  }
+  #left-panel button:hover {
+    background:#4caf50;
+    color:#fff;
+    cursor:pointer;
+  }
+  #left-panel #scoreboard {
+    margin-top: auto;
+    padding: 10px;
+    background:#000a;
+    border-radius: 8px;
+  }
+  #scoreboard h2 {
+    margin: 5px 0;
+    font-weight: normal;
+  }
+  #map-container {
+    height: 200px;
+    margin: 12px 0;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  iframe {
+    border:none;
+    width: 100%;
+    height: 100%;
+  }
+  #canvas-container {
+    flex-grow: 1;
+    position: relative;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    margin: auto;
+    background: #2c2c2c;
+  }
+  #btn-toggle-view {
+    background: #333;
+    color: #eee;
+  }
+  #btn-sound-toggle {
+    background: #333;
+    color: #eee;
+  }
+  #btn-reset {
+    background: #b33;
+    color: #fff;
+  }
+  #hud {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    color: #eee;
+    font-weight: bold;
+    font-size: 1.2em;
+    text-shadow: 0 0 5px black;
+  }
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div id="left-panel">
+    <h1>Proyecto Leones Bowling Stricke</h1>
+    <label for="mode-select">Modo de juego</label>
+    <select id="mode-select">
+      <option value="solo">Jugar Solo</option>
+      <option value="bot-easy">Vs Bot Fácil</option>
+      <option value="bot-medium">Vs Bot Medio</option>
+      <option value="bot-hard">Vs Bot Difícil</option>
+    </select>
+
+    <label for="scene-select">Escenario</label>
+    <select id="scene-select">
+      <option value="leon">Ciudad de León</option>
+      <option value="cardadal">Navatejera - Parque El Cardadal</option>
+      <option value="googlemaps">Google Maps</option>
+    </select>
+
+    <div id="map-container" style="display:none;">
+      <iframe
+        id="google-map"
+        src="https://www.google.com/maps/embed/v1/view?zoom=14&center=42.598726,-5.567095&key=YOUR_GOOGLE_MAPS_API_KEY"
+        allowfullscreen>
+      </iframe>
+    </div>
+
+    <label for="view-select">Vista</label>
+    <select id="view-select">
+      <option value="first">Primera Persona</option>
+      <option value="third">Tercera Persona</option>
+    </select>
+
+    <button id="btn-sound-toggle">Sonido: ON</button>
+    <button id="btn-reset">Reiniciar Partida</button>
+
+    <div id="scoreboard">
+      <h2>Puntuación</h2>
+      <div id="score-text">Jugador: 0</div>
+      <div id="bot-score-text" style="display:none;">Bot: 0</div>
+    </div>
+  </div>
+
+  <div id="canvas-container">
+    <canvas id="game-canvas" width="800" height="600"></canvas>
+    <div id="hud"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // --- Variables globales ---
+  const canvas = document.getElementById('game-canvas');
+  const ctx = canvas.getContext('2d');
+
+  // Modos y selección
+  let mode = 'solo'; // solo, bot-easy, bot-medium, bot-hard
+  let view = 'first'; // first, third
+  let scene = 'leon'; // leon, cardadal, googlemaps
+  let soundOn = true;
+
+  // Puntuaciones
+  let playerScore = 0;
+  let botScore = 0;
+  let turn = 'player'; // 'player' or 'bot'
+  let isThrowing = false;
+  let ballPos = { x: canvas.width / 2, y: canvas.height - 100 };
+  let ballVel = { x: 0, y: 0 };
+  let draggingBall = false;
+  let dragStart = null;
+  let michePos = { x: canvas.width / 2, y: canvas.height / 2 - 100 };
+  let placingMiche = true;
+
+  // Bot dificultad parámetros
+  const botDifficulty = {
+    'bot-easy': { accuracy: 0.3 },
+    'bot-medium': { accuracy: 0.6 },
+    'bot-hard': { accuracy: 0.9 },
+  };
+
+  // Objetos del juego
+  const bolos = [];
+  const boloRadius = 15;
+  const boloPositionsDefault = [
+    { x: canvas.width / 2 - 40, y: 150 },
+    { x: canvas.width / 2, y: 150 },
+    { x: canvas.width / 2 + 40, y: 150 },
+    { x: canvas.width / 2 - 20, y: 120 },
+    { x: canvas.width / 2 + 20, y: 120 },
+  ];
+
+  // Sonidos
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  let soundBuffers = {};
+  let musicAudio = null;
+
+  // Fondo (imagenes cargadas)
+  const images = {};
+  const imageSources = {
+    'leon': 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Le%C3%B3n_%28Spagna%29_-_Cattedrale_01.JPG/800px-Le%C3%B3n_%28Spagna%29_-_Cattedrale_01.JPG',
+    'cardadal': 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Parque_El_Cardadal_-_Navatejera.jpg/800px-Parque_El_Cardadal_-_Navatejera.jpg'
+  };
+
+  // Inicialización
+
+  // Carga imágenes
+  function loadImages(sources, callback) {
+    let loaded = 0;
+    const keys = Object.keys(sources);
+    for (let key of keys) {
+      const img = new Image();
+      img.src = sources[key];
+      img.onload = () => {
+        images[key] = img;
+        loaded++;
+        if (loaded === keys.length) callback();
+      };
+      img.onerror = () => {
+        console.warn("No se pudo cargar imagen " + key);
+        loaded++;
+        if (loaded === keys.length) callback();
+      };
+    }
+  }
+
+  // Setup inicial bolos
+  function resetBolos() {
+    bolos.length = 0;
+    for (let pos of boloPositionsDefault) {
+      bolos.push({ x: pos.x, y: pos.y, radius: boloRadius, fallen: false, velY: 0 });
+    }
+  }
+
+  // Reiniciar partida
+  function resetGame() {
+    playerScore = 0;
+    botScore = 0;
+    turn = 'player';
+    isThrowing = false;
+    ballPos = { x: canvas.width / 2, y: canvas.height - 100 };
+    ballVel = { x: 0, y: 0 };
+    placingMiche = true;
+    michePos = { x: canvas.width / 2, y: canvas.height / 2 - 100 };
+    resetBolos();
+    updateScore();
+  }
+
+  // Actualizar marcador
+  function updateScore() {
+    document.getElementById('score-text').textContent = `Jugador: ${playerScore}`;
+    const botScoreEl = document.getElementById('bot-score-text');
+    if (mode === 'solo') {
+      botScoreEl.style.display = 'none';
+    } else {
+      botScoreEl.style.display = 'block';
+      botScoreEl.textContent = `Bot: ${botScore}`;
+    }
+  }
+
+  // Sonido simple (beep)
+  function playBeep(freq=440, duration=100) {
+    if (!soundOn) return;
+    const osc = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    osc.frequency.value = freq;
+    osc.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    osc.start();
+    gainNode.gain.setValueAtTime(1, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration/1000);
+    osc.stop(audioContext.currentTime + duration/1000);
+  }
+
+  // Música fondo (loop simple)
+  function playMusic() {
+    if (!soundOn) return;
+    if (musicAudio) musicAudio.pause();
+    musicAudio = new Audio('https://actions.google.com/sounds/v1/ambiences/restaurant_ambience.ogg');
+    musicAudio.loop = true;
+    musicAudio.volume = 0.15;
+    musicAudio.play();
+  }
+  function stopMusic() {
+    if (musicAudio) {
+      musicAudio.pause();
+      musicAudio = null;
+    }
+  }
+
+  // Actualizar fondo según escena
+  function drawBackground() {
+    if (scene === 'leon' || scene === 'cardadal') {
+      if (images[scene]) {
+        ctx.drawImage(images[scene], 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    } else if (scene === 'googlemaps') {
+      // Fondo neutro para google maps, ya que el iframe está separado
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+
+  // Dibujo bolos
+  function drawBolos() {
+    for (let bolo of bolos) {
+      ctx.beginPath();
+      ctx.fillStyle = bolo.fallen ? '#666' : '#fff';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.ellipse(bolo.x, bolo.y, bolo.radius*0.7, bolo.radius, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      if (bolo.fallen) {
+        ctx.strokeStyle = '#800';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bolo.x - bolo.radius*0.7, bolo.y);
+        ctx.lineTo(bolo.x + bolo.radius*0.7, bolo.y + bolo.radius);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Dibujo miche (objeto rojo)
+  function drawMiche() {
+    ctx.beginPath();
+    ctx.fillStyle = '#f00';
+    ctx.shadowColor = 'rgba(255,0,0,0.7)';
+    ctx.shadowBlur = 12;
+    ctx.arc(michePos.x, michePos.y, 20, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Dibujo bola
+  function drawBall() {
+    ctx.beginPath();
+    ctx.fillStyle = '#4444ff';
+    ctx.shadowColor = 'rgba(0,0,255,0.8)';
+    ctx.shadowBlur = 15;
+    ctx.arc(ballPos.x, ballPos.y, 25, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Dibujo jugador animado (simplificado)
+  function drawPlayer() {
+    ctx.save();
+    ctx.fillStyle = '#08f';
+    if (view === 'first') {
+      ctx.fillRect(canvas.width / 2 - 25, canvas.height - 140, 50, 100);
+      ctx.fillStyle = '#0af';
+      ctx.fillRect(canvas.width / 2 - 15, canvas.height - 140, 30, 60);
+    } else {
+      // tercera persona, más pequeño y en esquina
+      ctx.fillRect(canvas.width / 2 - 50, canvas.height - 180, 40, 80);
+      ctx.fillStyle = '#06c';
+      ctx.fillRect(canvas.width / 2 - 45, canvas.height - 180, 30, 50);
+    }
+    ctx.restore();
+  }
+
+  // Control de la bola por drag & throw estilo slingshot
+  canvas.addEventListener('mousedown', (e) => {
+    if (turn !== 'player' || isThrowing) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const dist = Math.hypot(mx - ballPos.x, my - ballPos.y);
+    if (dist < 30) {
+      draggingBall = true;
+      dragStart = { x: mx, y: my };
+    }
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    if (!draggingBall) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    ballPos.x = mx;
+    ballPos.y = my;
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    if (!draggingBall) return;
+    draggingBall = false;
+    // Lanzar bola
+    isThrowing = true;
+    // Velocidad proporcional al vector arrastrado
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    let vx = dragStart.x - mx;
+    let vy = dragStart.y - my;
+    // Limitar velocidad máxima
+    const maxSpeed = 20;
+    const speed = Math.min(Math.hypot(vx, vy), maxSpeed);
+    const angle = Math.atan2(vy, vx);
+    ballVel.x = Math.cos(angle) * speed;
+    ballVel.y = Math.sin(angle) * speed;
+    // No se puede mover miche tras lanzar bola
+    placingMiche = false;
+  });
+
+  // Colocar miche con drag antes del tiro
+  let draggingMiche = false;
+  canvas.addEventListener('mousedown', (e) => {
+    if (!placingMiche) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const dist = Math.hypot(mx - michePos.x, my - michePos.y);
+    if (dist < 20) {
+      draggingMiche = true;
+    }
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    if (!draggingMiche) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    michePos.x = Math.min(Math.max(mx, 50), canvas.width - 50);
+    michePos.y = Math.min(Math.max(my, 50), canvas.height / 2);
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    draggingMiche = false;
+  });
+
+  // Lógica física simple bola vs bolos
+  function updatePhysics() {
+    if (!isThrowing) return;
+
+    // Mover bola
+    ballPos.x += ballVel.x;
+    ballPos.y += ballVel.y;
+
+    // Fricción
+    ballVel.x *= 0.97;
+    ballVel.y *= 0.97;
+
+    // Limitar bola dentro canvas
+    if (ballPos.x < 25) {
+      ballPos.x = 25; ballVel.x *= -0.5;
+      playBeep(300);
+    }
+    if (ballPos.x > canvas.width - 25) {
+      ballPos.x = canvas.width - 25; ballVel.x *= -0.5;
+      playBeep(300);
+    }
+    if (ballPos.y < 25) {
+      ballPos.y = 25; ballVel.y *= -0.5;
+      playBeep(300);
+    }
+    if (ballPos.y > canvas.height - 25) {
+      ballPos.y = canvas.height - 25; ballVel.y *= -0.5;
+      playBeep(300);
+    }
+
+    // Colisiones bola con bolos
+    for (let bolo of bolos) {
+      if (bolo.fallen) continue;
+      const dx = bolo.x - ballPos.x;
+      const dy = bolo.y - ballPos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < bolo.radius + 25) {
+        bolo.fallen = true;
+        playerScore++;
+        playBeep(600);
+      }
+    }
+
+    // Si bola casi se detiene
+    if (Math.abs(ballVel.x) < 0.2 && Math.abs(ballVel.y) < 0.2) {
+      isThrowing = false;
+      placingMiche = true;
+      ballPos = { x: canvas.width / 2, y: canvas.height - 100 };
+      ballVel = { x: 0, y: 0 };
+
+      updateScore();
+
+      if (mode !== 'solo' && turn === 'player') {
+        turn = 'bot';
+        setTimeout(botThrow, 1000);
+      } else if (mode !== 'solo' && turn === 'bot') {
+        turn = 'player';
+      }
+    }
+  }
+
+  // Turno bot con IA simple
+  function botThrow() {
+    if (turn !== 'bot') return;
+    placingMiche = false;
+    isThrowing = true;
+
+    const accuracy = botDifficulty[mode]?.accuracy || 0.5;
+    // El bot tiene una probabilidad de "fallar"
+    const hitBolos = Math.floor(accuracy * bolos.length * Math.random());
+    botScore += hitBolos;
+
+    // Animación rápida bola bot (simple)
+    ballPos = { x: canvas.width / 2, y: canvas.height - 100 };
+    ballVel = { x: 0, y: -15 * accuracy };
+
+    setTimeout(() => {
+      isThrowing = false;
+      placingMiche = true;
+      ballPos = { x: canvas.width / 2, y: canvas.height - 100 };
+      ballVel = { x: 0, y: 0 };
+      updateScore();
+      turn = 'player';
+    }, 1500);
+  }
+
+  // Render principal
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBackground();
+    drawBolos();
+    drawMiche();
+    drawBall();
+    drawPlayer();
+
+    // HUD
+    const hud = document.getElementById('hud');
+    hud.textContent = turn === 'player' ? 'Tu turno' : 'Turno Bot';
+
+    updatePhysics();
+    requestAnimationFrame(render);
+  }
+
+  // Eventos UI
+  document.getElementById('mode-select').addEventListener('change', (e) => {
+    mode = e.target.value;
+    document.getElementById('bot-score-text').style.display = mode === 'solo' ? 'none' : 'block';
+    resetGame();
+  });
+  document.getElementById('scene-select').addEventListener('change', (e) => {
+    scene = e.target.value;
+    // Mostrar u ocultar mapa googlemaps
+    const mapCont = document.getElementById('map-container');
+    if (scene === 'googlemaps') {
+      mapCont.style.display = 'block';
+    } else {
+      mapCont.style.display = 'none';
+    }
+    resetGame();
+  });
+  document.getElementById('view-select').addEventListener('change', (e) => {
+    view = e.target.value;
+  });
+  document.getElementById('btn-sound-toggle').addEventListener('click', () => {
+    soundOn = !soundOn;
+    const btn = document.getElementById('btn-sound-toggle');
+    btn.textContent = soundOn ? 'Sonido: ON' : 'Sonido: OFF';
+    if (soundOn) playMusic();
+    else stopMusic();
+  });
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    resetGame();
+  });
+
+  // Iniciar juego
+  loadImages(imageSources, () => {
+    resetGame();
+    playMusic();
+    render();
+  });
+
+})();
+</script>
+</body>
+</html>
